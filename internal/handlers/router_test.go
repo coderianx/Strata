@@ -68,6 +68,13 @@ func TestAPIRouterRoutes(t *testing.T) {
 			"{\"error\":\"invalid_request\"}\n",
 		},
 		{
+			"me without token",
+			http.MethodGet,
+			"/api/v1/auth/me",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
 			"register rejects other methods",
 			http.MethodGet,
 			"/api/v1/auth/register",

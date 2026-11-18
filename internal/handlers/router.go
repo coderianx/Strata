@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/coderianx/Strata/internal/handlers/auth"
+	"github.com/coderianx/Strata/internal/middlewares"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -13,10 +14,12 @@ import (
 func APIRouter() *chi.Mux {
 	router := chi.NewRouter()
 
+	// auth
 	router.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/register", auth.RegisterHandler)
 		r.Post("/login", auth.LoginHandler)
 		r.Post("/refresh", auth.RefreshHandler)
+		r.With(middlewares.Auth).Get("/me", auth.GetMeHandler)
 	})
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {

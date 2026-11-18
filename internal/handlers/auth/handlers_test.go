@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/coderianx/Strata/internal/middlewares"
 )
 
 // callHandler invokes a handler with a JSON request body and returns
@@ -271,4 +273,52 @@ func TestRefreshHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetMeHandler(t *testing.T) {
+	t.Run("authenticated request", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "test-secret")
+
+		// Drive the full production path: Auth validates the access
+		// token and attaches the user; GetMeHandler echoes it.
+		accessToken, err := generateJWT(42, "kodcu_42")
+
+		if err != nil {
+			t.Fatalf("generateJWT() = %v, want nil", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+
+		rec := httptest.NewRecorder()
+
+		middlewares.Auth(http.HandlerFunc(GetMeHandler)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		want := "{\"id\":42,\"username\":\"kodcu_42\"}\n"
+
+		if rec.Body.String() != want {
+			t.Errorf("body = %s, want %s", rec.Body.String(), want)
+		}
+	})
+
+	t.Run("request without the middleware", func(t *testing.T) {
+		// Mounting GetMeHandler unprotected must fail safely instead
+		// of serving anonymous requests.
+		rec := callHandler(t, GetMeHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		want := "{\"error\":\"invalid_token\"}\n"
+
+		if rec.Body.String() != want {
+			t.Errorf("body = %s, want %s", rec.Body.String(), want)
+		}
+	})
 }

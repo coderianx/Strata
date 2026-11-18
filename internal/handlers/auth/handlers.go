@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coderianx/Strata/internal/middlewares"
 	"github.com/coderianx/Strata/internal/models"
 	"github.com/coderianx/Strata/internal/repository"
 	"golang.org/x/crypto/bcrypt"
@@ -348,5 +349,36 @@ func RefreshHandler(
 	json.NewEncoder(w).Encode(map[string]any{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
+	})
+}
+
+// GetMe returns the authenticated user's id and username. It must be
+// mounted behind middlewares.Auth, which validates the access token
+// and attaches the user to the request context; a request that never
+// passed through the middleware gets the shared 401 invalid_token
+// response.
+func GetMeHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	user, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_token",
+		})
+
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":       user.ID,
+		"username": user.Username,
 	})
 }

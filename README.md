@@ -35,6 +35,7 @@ Strata is currently **under development**. The core architecture and the authent
 | `POST /api/v1/auth/register` | `name`, `username`, `email`, `password` | `201` — `{"id","name","username","email"}` |
 | `POST /api/v1/auth/login` | `email`, `password` | `200` — `{"accessToken","refreshToken"}` |
 | `POST /api/v1/auth/refresh` | `refreshToken` | `200` — new `{"accessToken","refreshToken"}` |
+| `GET /api/v1/auth/me` | `Authorization: Bearer <accessToken>` | `200` — `{"id","username"}` |
 | `GET /health` | — | `200` — `{"status":"ok"}` |
 
 Example:
@@ -45,7 +46,7 @@ curl -X POST http://localhost:9090/api/v1/auth/register \
   -d '{"name":"Kodcu","username":"kodcu_42","email":"kodcu@strata.dev","password":"sifre1234"}'
 ```
 
-Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials or invalid refresh token), `409` (username/email already taken).
+Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials, invalid refresh token or invalid access token), `409` (username/email already taken).
 
 ## Architecture
 
