@@ -118,6 +118,26 @@ func TestInitUnreachableHome(t *testing.T) {
 	}
 }
 
+func TestInitEnvPathBlocked(t *testing.T) {
+	// Make the env file path a directory: O_EXCL tolerates it as an
+	// existing path, so the failure surfaces when godotenv tries to
+	// read the file.
+	home := freshHome(t)
+
+	if err := os.MkdirAll(filepath.Join(home, ".strata", ".env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Init()
+	if err == nil {
+		t.Fatal("Init() = nil, want error when the env file path is a directory")
+	}
+
+	if !strings.Contains(err.Error(), "load env file") {
+		t.Errorf("Init() error = %q, want it to mention the env file load step", err)
+	}
+}
+
 func TestCheckEnvs(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -106,5 +106,44 @@ func CreateTables() error {
 		return fmt.Errorf("store: create 'refresh_tokens' table error: %w", err)
 	}
 
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS organizations (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL UNIQUE,
+			description TEXT,
+			logo_url TEXT,
+			owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'organizations' table: %w", err)
+	}
+
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS organization_members  (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+			user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			role TEXT NOT NULL DEFAULT 'member', -- owner or member
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+			UNIQUE (organization_id, user_id)
+		);
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'organization_members' table: %w", err)
+	}
+
 	return nil
 }
