@@ -101,6 +101,8 @@ func TestValidateCreateNewOrganizationReq(t *testing.T) {
 				Slug:        "coderian-studio",
 				Description: "We craft software.",
 				LogoURL:     "https://strata.dev/logo.png",
+				Visibility:  true,
+				ShowMembers: true,
 			},
 			false,
 		},

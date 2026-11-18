@@ -8,7 +8,7 @@ import (
 )
 
 func TestCreateNewOrganizationReqJSONFields(t *testing.T) {
-	body := `{"name":"Coderian Studio","slug":"coderian-studio","description":"Crafted software.","logo_url":"https://strata.dev/logo.png"}`
+	body := `{"name":"Coderian Studio","slug":"coderian-studio","description":"Crafted software.","logo_url":"https://strata.dev/logo.png","visibility":true,"show_members":false}`
 
 	var req models.CreateNewOrganizationReq
 	if err := json.Unmarshal([]byte(body), &req); err != nil {
@@ -20,6 +20,8 @@ func TestCreateNewOrganizationReqJSONFields(t *testing.T) {
 		Slug:        "coderian-studio",
 		Description: "Crafted software.",
 		LogoURL:     "https://strata.dev/logo.png",
+		Visibility:  true,
+		ShowMembers: false,
 	}
 
 	if req != want {

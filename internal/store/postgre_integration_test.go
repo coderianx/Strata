@@ -59,7 +59,7 @@ func TestCreateTables(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"users", "organizations", "organization_members", "organization_invitations", "refresh_tokens"} {
+	for _, table := range []string{"users", "organizations", "organization_members", "organization_invitations", "organization_settings", "refresh_tokens"} {
 		var exists bool
 
 		err := DB.QueryRow(

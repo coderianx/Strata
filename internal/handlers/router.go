@@ -25,10 +25,15 @@ func APIRouter() *chi.Mux {
 
 	// organizations
 	router.Route("/api/v1/organizations", func(r chi.Router) {
-		r.With(middlewares.Auth).Post("/", organizations.CreateNewOrganization)
+		r.With(middlewares.Auth).Post("/", organizations.CreateNewOrganizationHandler)
 		r.With(middlewares.Auth).Delete("/{organization_id}", organizations.DeleteOrganization)
 		r.With(middlewares.Auth).Post("/{organization_id}/invite", organizations.InviteUserToOrganizationHandler)
+		r.With(middlewares.Auth).Get("/{organization_id}/members", organizations.OrganizationMembersHandler)
+		r.With(middlewares.Auth).Delete("/{organization_id}/members/{member_id}", organizations.RemoveMemberHandler)
 	})
+
+	// my organizations
+	router.With(middlewares.Auth).Get("/api/v1/my-organizations", organizations.GetMyOrganizationsHandler)
 
 	// invitations
 	router.Route("/api/v1/invitations", func(r chi.Router) {

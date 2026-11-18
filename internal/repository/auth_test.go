@@ -62,7 +62,7 @@ func requireDB(t *testing.T) {
 
 	_, err := store.DB.Exec(
 		context.Background(),
-		`TRUNCATE users, organizations, organization_members, organization_invitations, refresh_tokens RESTART IDENTITY CASCADE`,
+		`TRUNCATE users, organizations, organization_members, organization_invitations, organization_settings, refresh_tokens RESTART IDENTITY CASCADE`,
 	)
 	if err != nil {
 		t.Fatalf("reset tables: %v", err)

@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func CreateNewOrganization(
+func CreateNewOrganizationHandler(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
@@ -65,6 +65,8 @@ func CreateNewOrganization(
 		req.Description,
 		req.LogoURL,
 		claims.ID,
+		req.Visibility,
+		req.ShowMembers,
 	)
 
 	if err != nil {
@@ -502,5 +504,250 @@ func RejectInvitationHandler(
 
 	json.NewEncoder(w).Encode(map[string]any{
 		"message": "invitation_rejected",
+	})
+}
+
+func GetMyOrganizationsHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	organizations, err := repository.GetMyOrganizations(
+		r.Context(),
+		claims.ID,
+	)
+
+	if err != nil {
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"organizations": organizations,
+	})
+}
+
+func OrganizationMembersHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	organizationID, err := strconv.ParseInt(
+		chi.URLParam(r, "organization_id"), 10, 64,
+	)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_organization_id",
+		})
+
+		return
+	}
+
+	if organizationID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_organization_id",
+		})
+
+		return
+	}
+
+	members, err := repository.GetOrganizationMembers(
+		r.Context(),
+		organizationID,
+		claims.ID,
+	)
+
+	if err != nil {
+		if errors.Is(err, repository.ErrOrganizationNotFound) {
+			w.WriteHeader(404)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "organization_not_found",
+			})
+
+			return
+		}
+
+		if errors.Is(err, repository.ErrOrganizationMembersIsConfidential) {
+			w.WriteHeader(403)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "members_confidential",
+			})
+
+			return
+		}
+
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"members": members,
+	})
+}
+
+func RemoveMemberHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	organizationID, err := strconv.ParseInt(
+		chi.URLParam(r, "organization_id"), 10, 64,
+	)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_organization_id",
+		})
+
+		return
+	}
+
+	if organizationID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_organization_id",
+		})
+
+		return
+	}
+
+	memberID, err := strconv.ParseInt(
+		chi.URLParam(r, "member_id"), 10, 64,
+	)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_member_id",
+		})
+
+		return
+	}
+
+	if memberID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_member_id",
+		})
+
+		return
+	}
+
+	err = repository.RemoveMember(
+		r.Context(),
+		organizationID,
+		claims.ID,
+		memberID,
+	)
+
+	if err != nil {
+		if errors.Is(err, repository.ErrOrganizationNotFound) {
+			w.WriteHeader(404)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "organization_not_found",
+			})
+
+			return
+		}
+
+		if errors.Is(err, repository.ErrCannotRemoveOwner) {
+			w.WriteHeader(409)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "cannot_remove_owner",
+			})
+
+			return
+		}
+
+		if errors.Is(err, repository.ErrMemberNotFound) {
+			w.WriteHeader(404)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "member_not_found",
+			})
+
+			return
+		}
+
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"message": "member_removed",
 	})
 }

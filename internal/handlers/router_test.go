@@ -117,6 +117,27 @@ func TestAPIRouterRoutes(t *testing.T) {
 			"{\"error\":\"invalid_token\"}\n",
 		},
 		{
+			"my organizations without token",
+			http.MethodGet,
+			"/api/v1/my-organizations",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
+			"organization members without token",
+			http.MethodGet,
+			"/api/v1/organizations/42/members",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
+			"remove member without token",
+			http.MethodDelete,
+			"/api/v1/organizations/42/members/42",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
 			"register rejects other methods",
 			http.MethodGet,
 			"/api/v1/auth/register",

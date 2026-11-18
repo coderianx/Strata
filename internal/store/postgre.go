@@ -174,7 +174,27 @@ func CreateTables() error {
 	)
 
 	if err != nil {
-		return fmt.Errorf("store: create 'organization_invitaions' table: %w", err)
+		return fmt.Errorf("store: create 'organization_invitations' table: %w", err)
+	}
+
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS organization_settings (
+		    organization_id BIGINT PRIMARY KEY
+		        REFERENCES organizations(id) ON DELETE CASCADE,
+
+		    visibility BOOLEAN NOT NULL DEFAULT FALSE, -- false = private, true = public
+		    show_members BOOLEAN NOT NULL DEFAULT TRUE,
+
+		    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'organization_settings' table: %w", err)
 	}
 
 	return nil

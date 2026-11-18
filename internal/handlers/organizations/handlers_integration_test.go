@@ -110,7 +110,7 @@ func deleteRouter() http.Handler {
 	return router
 }
 
-func TestCreateNewOrganizationIntegration(t *testing.T) {
+func TestCreateNewOrganizationHandlerIntegration(t *testing.T) {
 	requireDB(t)
 
 	userID := insertUser(t, "org_owner", "owner@strata.dev")
@@ -118,9 +118,9 @@ func TestCreateNewOrganizationIntegration(t *testing.T) {
 	t.Run("creates the organization and an owner membership", func(t *testing.T) {
 		// Padding and mixed case on purpose: the handler must
 		// normalize before storing.
-		body := `{"name":"  Coderian Studio ","slug":"  CODERIAN-STUDIO ","description":" Crafted software. ","logo_url":" https://strata.dev/logo.png "}`
+		body := `{"name":"  Coderian Studio ","slug":"  CODERIAN-STUDIO ","description":" Crafted software. ","logo_url":" https://strata.dev/logo.png ","visibility":true,"show_members":true}`
 
-		rec := callAuthed(t, CreateNewOrganization, userID,
+		rec := callAuthed(t, CreateNewOrganizationHandler, userID,
 			http.MethodPost, "/api/v1/organizations", body)
 
 		if rec.Code != http.StatusCreated {
@@ -189,12 +189,32 @@ func TestCreateNewOrganizationIntegration(t *testing.T) {
 		if role != "owner" {
 			t.Errorf("owner role = %q, want %q", role, "owner")
 		}
+
+		var visibility, showMembers bool
+
+		err = store.DB.QueryRow(
+			context.Background(),
+			`SELECT visibility, show_members FROM organization_settings
+			 WHERE organization_id = (SELECT id FROM organizations WHERE slug = $1)`,
+			"coderian-studio",
+		).Scan(&visibility, &showMembers)
+		if err != nil {
+			t.Fatalf("load organization settings: %v", err)
+		}
+
+		if !visibility {
+			t.Error("visibility = false, want true")
+		}
+
+		if !showMembers {
+			t.Error("show_members = false, want true")
+		}
 	})
 
 	t.Run("rejects a duplicate slug", func(t *testing.T) {
 		body := `{"name":"Other","slug":"coderian-studio"}`
 
-		rec := callAuthed(t, CreateNewOrganization, userID,
+		rec := callAuthed(t, CreateNewOrganizationHandler, userID,
 			http.MethodPost, "/api/v1/organizations", body)
 
 		if rec.Code != http.StatusConflict {
@@ -248,6 +268,8 @@ func TestDeleteOrganizationIntegration(t *testing.T) {
 			"organization test fixture",
 			"",
 			ownerID,
+			false,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("insert fixture organization: %v", err)
@@ -387,6 +409,8 @@ func TestInviteUserToOrganizationHandlerIntegration(t *testing.T) {
 		"organization test fixture",
 		"",
 		ownerID,
+		false,
+		false,
 	); err != nil {
 		t.Fatalf("insert fixture organization: %v", err)
 	}
@@ -569,6 +593,8 @@ func insertOrg(t *testing.T, ownerID int64, slug string) int64 {
 		"organization test fixture",
 		"",
 		ownerID,
+		false,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("insert fixture organization: %v", err)
@@ -945,6 +971,393 @@ func TestRejectInvitationHandlerIntegration(t *testing.T) {
 
 		if res.Error != "invalid_invitation_id" {
 			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
+		}
+	})
+}
+
+// insertOrgWithSettings stores an organization with explicit
+// visibility and show_members values and returns its id.
+func insertOrgWithSettings(
+	t *testing.T,
+	ownerID int64,
+	slug string,
+	visibility, showMembers bool,
+) int64 {
+	t.Helper()
+
+	err := repository.CreateNewOrganization(
+		context.Background(),
+		"Strata "+slug,
+		slug,
+		"organization test fixture",
+		"",
+		ownerID,
+		visibility,
+		showMembers,
+	)
+	if err != nil {
+		t.Fatalf("insert fixture organization: %v", err)
+	}
+
+	var orgID int64
+
+	err = store.DB.QueryRow(
+		context.Background(),
+		`SELECT id FROM organizations WHERE slug = $1`,
+		slug,
+	).Scan(&orgID)
+	if err != nil {
+		t.Fatalf("load fixture organization id: %v", err)
+	}
+
+	return orgID
+}
+
+// acceptInvitationFor adds an existing user to an organization by
+// inviting and accepting through the repository.
+func acceptInvitationFor(t *testing.T, orgID, senderID, userID int64, username string) {
+	t.Helper()
+
+	invitationID := insertInvitation(t, orgID, senderID, username, "member")
+
+	if err := repository.AcceptInvitation(context.Background(), userID, invitationID); err != nil {
+		t.Fatalf("accept fixture invitation: %v", err)
+	}
+}
+
+func TestGetMyOrganizationsHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	otherID := insertUser(t, "other_owner", "other@strata.dev")
+
+	insertOrg(t, ownerID, "my-org-1")
+	insertOrg(t, ownerID, "my-org-2")
+
+	// Another user's organization must never show up in the list.
+	insertOrg(t, otherID, "other-org")
+
+	rec := callAuthed(t, GetMyOrganizationsHandler, ownerID, http.MethodGet, "/", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var res struct {
+		Organizations []models.MyOrganizations `json:"organizations"`
+	}
+	decodeResponse(t, rec, &res)
+
+	if len(res.Organizations) != 2 {
+		t.Fatalf("organizations = %d, want 2: %+v", len(res.Organizations), res.Organizations)
+	}
+
+	for _, org := range res.Organizations {
+		if org.Slug != "my-org-1" && org.Slug != "my-org-2" {
+			t.Errorf("unexpected organization slug %q", org.Slug)
+		}
+
+		if org.Name == "" || org.ID <= 0 || org.CreatedAt.IsZero() {
+			t.Errorf("organization %q is missing fields: %+v", org.Slug, org)
+		}
+	}
+}
+
+func TestOrganizationMembersHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	memberID := insertUser(t, "org_member", "member@strata.dev")
+	outsiderID := insertUser(t, "outsider", "outsider@strata.dev")
+
+	// Private with a hidden member list: only members may see it.
+	orgID := insertOrgWithSettings(t, ownerID, "members-org", false, false)
+
+	acceptInvitationFor(t, orgID, ownerID, memberID, "org_member")
+
+	publicHidden := insertOrgWithSettings(t, ownerID, "public-hidden", true, false)
+	publicShown := insertOrgWithSettings(t, ownerID, "public-shown", true, true)
+
+	t.Run("members always see the list", func(t *testing.T) {
+		// The organization is private with show_members disabled and
+		// the caller is a member: the settings must not matter.
+		rec := callMembers(t, memberID, strconv.FormatInt(orgID, 10))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var res struct {
+			Members []repository.OrganizationMember `json:"members"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if len(res.Members) != 2 {
+			t.Fatalf("members = %d, want 2: %+v", len(res.Members), res.Members)
+		}
+
+		roles := map[string]string{}
+
+		for _, member := range res.Members {
+			if member.ID <= 0 || member.Name == "" || member.JoinedAt.IsZero() {
+				t.Errorf("member %q is missing fields: %+v", member.Username, member)
+			}
+
+			roles[member.Username] = member.Role
+		}
+
+		if roles["org_owner"] != "owner" {
+			t.Errorf("org_owner role = %q, want %q", roles["org_owner"], "owner")
+		}
+
+		if roles["org_member"] != "member" {
+			t.Errorf("org_member role = %q, want %q", roles["org_member"], "member")
+		}
+	})
+
+	t.Run("a non-member gets no hint that a private organization exists", func(t *testing.T) {
+		rec := callMembers(t, outsiderID, strconv.FormatInt(orgID, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("public organization with hidden members", func(t *testing.T) {
+		rec := callMembers(t, outsiderID, strconv.FormatInt(publicHidden, 10))
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusForbidden, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "members_confidential" {
+			t.Errorf("error = %q, want %q", res.Error, "members_confidential")
+		}
+	})
+
+	t.Run("public organization with visible members", func(t *testing.T) {
+		rec := callMembers(t, outsiderID, strconv.FormatInt(publicShown, 10))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var res struct {
+			Members []repository.OrganizationMember `json:"members"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if len(res.Members) != 1 {
+			t.Errorf("members = %d, want 1 (the owner only)", len(res.Members))
+		}
+	})
+
+	t.Run("unknown organization", func(t *testing.T) {
+		rec := callMembers(t, ownerID, "424242")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		rec := callMembers(t, ownerID, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+}
+
+func TestRemoveMemberHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	memberID := insertUser(t, "org_member", "member@strata.dev")
+	anotherID := insertUser(t, "another_user", "another@strata.dev")
+
+	orgID := insertOrg(t, ownerID, "remove-org")
+	orgIDParam := strconv.FormatInt(orgID, 10)
+
+	acceptInvitationFor(t, orgID, ownerID, memberID, "org_member")
+
+	t.Run("the owner removes a member", func(t *testing.T) {
+		rec := callRemove(t, ownerID, orgIDParam, strconv.FormatInt(memberID, 10))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var res struct {
+			Message string `json:"message"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Message != "member_removed" {
+			t.Errorf("message = %q, want %q", res.Message, "member_removed")
+		}
+
+		var count int
+
+		err := store.DB.QueryRow(
+			context.Background(),
+			`SELECT COUNT(*) FROM organization_members
+			 WHERE organization_id = $1 AND user_id = $2`,
+			orgID,
+			memberID,
+		).Scan(&count)
+		if err != nil {
+			t.Fatalf("count memberships: %v", err)
+		}
+
+		if count != 0 {
+			t.Errorf("memberships left = %d, want 0", count)
+		}
+	})
+
+	t.Run("the owner cannot remove themselves", func(t *testing.T) {
+		rec := callRemove(t, ownerID, orgIDParam, strconv.FormatInt(ownerID, 10))
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusConflict, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "cannot_remove_owner" {
+			t.Errorf("error = %q, want %q", res.Error, "cannot_remove_owner")
+		}
+	})
+
+	t.Run("a non-owner member cannot remove anyone", func(t *testing.T) {
+		// Restore the membership removed by the first subtest.
+		acceptInvitationFor(t, orgID, ownerID, memberID, "org_member")
+
+		rec := callRemove(t, memberID, orgIDParam, strconv.FormatInt(anotherID, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("removing a non-member", func(t *testing.T) {
+		rec := callRemove(t, ownerID, orgIDParam, strconv.FormatInt(anotherID, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "member_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "member_not_found")
+		}
+	})
+
+	t.Run("unknown organization", func(t *testing.T) {
+		rec := callRemove(t, ownerID, "424242", strconv.FormatInt(memberID, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("invalid member id", func(t *testing.T) {
+		rec := callRemove(t, ownerID, orgIDParam, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_member_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_member_id")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		rec := callRemove(t, ownerID, "not-a-number", strconv.FormatInt(memberID, 10))
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
 		}
 	})
 }

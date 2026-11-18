@@ -33,6 +33,8 @@ func TestCreateNewOrganization(t *testing.T) {
 			"organization test fixture",
 			"https://strata.dev/logo.png",
 			ownerID,
+			false,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("CreateNewOrganization() = %v, want nil", err)
@@ -74,6 +76,8 @@ func TestCreateNewOrganization(t *testing.T) {
 			"another fixture",
 			"",
 			ownerID,
+			false,
+			false,
 		)
 		if !errors.Is(err, ErrOrganizationAlreadyExists) {
 			t.Errorf("CreateNewOrganization() = %v, want ErrOrganizationAlreadyExists", err)
@@ -113,6 +117,8 @@ func TestDeleteOrganization(t *testing.T) {
 			"organization test fixture",
 			"",
 			ownerID,
+			false,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("insert fixture organization: %v", err)

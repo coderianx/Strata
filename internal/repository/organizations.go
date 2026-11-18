@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/coderianx/Strata/internal/models"
 	"github.com/coderianx/Strata/internal/store"
@@ -25,6 +26,8 @@ func CreateNewOrganization(
 	description string,
 	logoURL string,
 	ownerID int64,
+	visibility bool,
+	showMembers bool,
 ) error {
 
 	tx, err := store.DB.Begin(ctx)
@@ -77,6 +80,24 @@ func CreateNewOrganization(
 
 	if err != nil {
 		return fmt.Errorf("repository: insert owner membership: %w", err)
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		`
+		INSERT INTO organization_settings (
+			organization_id, visibility, show_members
+		)
+		VALUES($1,$2,$3)
+		`,
+
+		orgID,
+		visibility,
+		showMembers,
+	)
+
+	if err != nil {
+		return fmt.Errorf("repository insert organization_settings: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -390,6 +411,254 @@ func RejectInvitation(
 
 	if tag.RowsAffected() == 0 {
 		return ErrInvitationNotFound
+	}
+
+	return nil
+}
+
+func GetMyOrganizations(
+	ctx context.Context,
+	userID int64,
+) ([]models.MyOrganizations, error) {
+	rows, err := store.DB.Query(
+		ctx,
+		`
+		SELECT
+		    o.id,
+		    o.name,
+		    o.slug,
+		    o.description,
+		    o.logo_url,
+		    o.created_at
+		FROM organization_members om
+		INNER JOIN organizations o
+		    ON o.id = om.organization_id
+		WHERE om.user_id = $1
+		`,
+		userID,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	// Start with an empty slice so an empty result encodes as []
+	// instead of null.
+	organizations := []models.MyOrganizations{}
+
+	for rows.Next() {
+		var org models.MyOrganizations
+
+		err := rows.Scan(
+			&org.ID,
+			&org.Name,
+			&org.Slug,
+			&org.Description,
+			&org.LogoURL,
+			&org.CreatedAt,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		organizations = append(organizations, org)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return organizations, nil
+
+}
+
+// ErrOrganizationMembersIsConfidential is returned by
+// GetOrganizationMembers when the organization is public but hides
+// its member list, so handlers can answer with a distinct error
+// without leaking anything about the members.
+var ErrOrganizationMembersIsConfidential = errors.New("repository: organization members are confidential")
+
+// OrganizationMember is one row of an organization's member list.
+// The member's email is deliberately left out: public member lists
+// must not leak contact details.
+type OrganizationMember struct {
+	ID       int64     `json:"id"`
+	Name     string    `json:"name"`
+	Username string    `json:"username"`
+	Role     string    `json:"role"`
+	JoinedAt time.Time `json:"joined_at"`
+}
+
+// GetOrganizationMembers returns the organization's member list.
+// Members always see it, whatever the settings say. For everyone
+// else the visibility rules decide: a private organization is
+// indistinguishable from a missing one (ErrOrganizationNotFound,
+// like DeleteOrganization does), and a public organization with
+// show_members disabled answers ErrOrganizationMembersIsConfidential.
+func GetOrganizationMembers(
+	ctx context.Context,
+	organizationID int64,
+	userID int64,
+) ([]OrganizationMember, error) {
+	// One query fetches the settings and whether the caller is a
+	// member; the checks below decide on those three values.
+	var visibility bool
+	var showMembers bool
+	var isMember bool
+
+	err := store.DB.QueryRow(
+		ctx,
+		`
+		SELECT
+			s.visibility,
+			s.show_members,
+			EXISTS (
+				SELECT 1
+				FROM organization_members m
+				WHERE m.organization_id = $1 AND m.user_id = $2
+			)
+		FROM organization_settings s
+		WHERE s.organization_id = $1;
+		`,
+		organizationID,
+		userID,
+	).Scan(&visibility, &showMembers, &isMember)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrOrganizationNotFound
+		}
+
+		return nil, fmt.Errorf("repository: load organization settings: %w", err)
+	}
+
+	if !isMember {
+		if !visibility {
+			return nil, ErrOrganizationNotFound
+		}
+
+		if !showMembers {
+			return nil, ErrOrganizationMembersIsConfidential
+		}
+	}
+
+	rows, err := store.DB.Query(
+		ctx,
+		`
+		SELECT u.id, u.name, u.username, m.role, m.created_at
+		FROM organization_members m
+		INNER JOIN users u ON u.id = m.user_id
+		WHERE m.organization_id = $1
+		ORDER BY m.created_at;
+		`,
+		organizationID,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("repository: list organization members: %w", err)
+	}
+
+	defer rows.Close()
+
+	// Start with an empty slice so an empty result encodes as []
+	// instead of null.
+	members := []OrganizationMember{}
+
+	for rows.Next() {
+		var member OrganizationMember
+
+		err = rows.Scan(
+			&member.ID,
+			&member.Name,
+			&member.Username,
+			&member.Role,
+			&member.JoinedAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("repository: scan organization member: %w", err)
+		}
+
+		members = append(members, member)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repository: list organization members: %w", err)
+	}
+
+	return members, nil
+}
+
+// ErrMemberNotFound is returned by RemoveMember when the user is not
+// a member of the organization. The caller is verified as the
+// organization's owner first, so this reveals nothing sensitive.
+var ErrMemberNotFound = errors.New("repository: member not found")
+
+// ErrCannotRemoveOwner is returned by RemoveMember when the owner
+// tries to remove their own membership: the owner row is what makes
+// the organization visible to membership-scoped queries, so removing
+// it would orphan the organization.
+var ErrCannotRemoveOwner = errors.New("repository: owner cannot be removed")
+
+// RemoveMember deletes the organization's membership row, but only
+// when ownerID is the organization's owner: the ownership check
+// returns the same ErrOrganizationNotFound as a missing organization,
+// so non-owners cannot even learn which organizations exist.
+func RemoveMember(
+	ctx context.Context,
+	organizationID int64,
+	ownerID int64,
+	memberID int64,
+) error {
+	var isOwner bool
+
+	err := store.DB.QueryRow(
+		ctx,
+		`
+		SELECT EXISTS (
+			SELECT 1
+			FROM organizations
+			WHERE id = $1 AND owner_id = $2
+		);
+		`,
+		organizationID,
+		ownerID,
+	).Scan(&isOwner)
+
+	if err != nil {
+		return fmt.Errorf("repository: check organization owner: %w", err)
+	}
+
+	if !isOwner {
+		return ErrOrganizationNotFound
+	}
+
+	// The owner's own membership is what makes the organization
+	// visible to membership-scoped queries; removing it would orphan
+	// the organization.
+	if memberID == ownerID {
+		return ErrCannotRemoveOwner
+	}
+
+	tag, err := store.DB.Exec(
+		ctx,
+		`
+		DELETE FROM organization_members
+		WHERE organization_id = $1 AND user_id = $2;
+		`,
+		organizationID,
+		memberID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("repository: remove member: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrMemberNotFound
 	}
 
 	return nil

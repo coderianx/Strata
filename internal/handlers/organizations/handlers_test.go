@@ -167,11 +167,11 @@ func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder, got any) {
 // live in handlers_integration_test.go behind the "integration" build
 // tag.
 
-func TestCreateNewOrganization(t *testing.T) {
+func TestCreateNewOrganizationHandler(t *testing.T) {
 	t.Run("request without the middleware", func(t *testing.T) {
 		// Mounting the handler unprotected must fail safely instead
 		// of serving anonymous requests.
-		rec := callHandler(t, CreateNewOrganization, "")
+		rec := callHandler(t, CreateNewOrganizationHandler, "")
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
@@ -190,7 +190,7 @@ func TestCreateNewOrganization(t *testing.T) {
 	t.Run("malformed JSON", func(t *testing.T) {
 		t.Setenv("JWT_SECRET", testSecret)
 
-		rec := callAuthed(t, CreateNewOrganization, 42, http.MethodPost, "/", `{"name":`)
+		rec := callAuthed(t, CreateNewOrganizationHandler, 42, http.MethodPost, "/", `{"name":`)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -221,7 +221,7 @@ func TestCreateNewOrganization(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				rec := callAuthed(t, CreateNewOrganization, 42, http.MethodPost, "/", tt.body)
+				rec := callAuthed(t, CreateNewOrganizationHandler, 42, http.MethodPost, "/", tt.body)
 
 				if rec.Code != http.StatusBadRequest {
 					t.Errorf("status = %d, want %d; body = %s",
@@ -470,6 +470,186 @@ func TestRejectInvitationHandler(t *testing.T) {
 
 		if res.Error != "invalid_invitation_id" {
 			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
+		}
+	})
+}
+
+// membersRouter mounts the members and remove handlers behind the
+// middleware with route patterns, so the URL parameters are
+// populated exactly like in production.
+func membersRouter() http.Handler {
+	router := chi.NewRouter()
+
+	router.Route("/api/v1/organizations", func(r chi.Router) {
+		r.With(middlewares.Auth).Get("/{organization_id}/members", OrganizationMembersHandler)
+		r.With(middlewares.Auth).Delete("/{organization_id}/members/{member_id}", RemoveMemberHandler)
+	})
+
+	return router
+}
+
+// callMembers requests an organization's member list through the
+// router. The organization id only has to parse: these tests never
+// reach the database.
+func callMembers(
+	t *testing.T,
+	userID int64,
+	organizationID string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/organizations/"+organizationID+"/members",
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer "+makeToken(t, testSecret, userID))
+
+	rec := httptest.NewRecorder()
+
+	membersRouter().ServeHTTP(rec, req)
+
+	return rec
+}
+
+// callRemove sends an authenticated remove-member request through
+// the router. The ids only have to parse: these tests never reach
+// the database.
+func callRemove(
+	t *testing.T,
+	userID int64,
+	organizationID, memberID string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/v1/organizations/"+organizationID+"/members/"+memberID,
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer "+makeToken(t, testSecret, userID))
+
+	rec := httptest.NewRecorder()
+
+	membersRouter().ServeHTTP(rec, req)
+
+	return rec
+}
+
+func TestGetMyOrganizationsHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		// Mounting the handler unprotected must fail safely instead
+		// of serving anonymous requests.
+		rec := callHandler(t, GetMyOrganizationsHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+}
+
+func TestOrganizationMembersHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		rec := callHandler(t, OrganizationMembersHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		// A route the pattern cannot parse must fail before anything
+		// else is read.
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callMembers(t, 42, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+}
+
+func TestRemoveMemberHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		rec := callHandler(t, RemoveMemberHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callRemove(t, 42, "not-a-number", "7")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+
+	t.Run("invalid member id", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callRemove(t, 42, "42", "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_member_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_member_id")
 		}
 	})
 }
