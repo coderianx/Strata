@@ -36,6 +36,12 @@ Strata is currently **under development**. The core architecture and the authent
 | `POST /api/v1/auth/login` | `email`, `password` | `200` — `{"accessToken","refreshToken"}` |
 | `POST /api/v1/auth/refresh` | `refreshToken` | `200` — new `{"accessToken","refreshToken"}` |
 | `GET /api/v1/auth/me` | `Authorization: Bearer <accessToken>` | `200` — `{"id","username"}` |
+| `POST /api/v1/organizations` | Bearer + `name`, `slug`, `description`, `logo_url` | `201` — `{"message":"organization_created"}` |
+| `DELETE /api/v1/organizations/{organization_id}` | Bearer token | `200` — `{"message":"organization_deleted"}` |
+| `POST /api/v1/organizations/{organization_id}/invite` | Bearer + `username`, `role` | `201` — `{"message":"user_invited"}` |
+| `GET /api/v1/invitations` | Bearer token | `200` — `{"invitations":[...]}` |
+| `POST /api/v1/invitations/{invitation_id}/accept` | Bearer token | `200` — `{"message":"invitation_accepted"}` |
+| `POST /api/v1/invitations/{invitation_id}/reject` | Bearer token | `200` — `{"message":"invitation_rejected"}` |
 | `GET /health` | — | `200` — `{"status":"ok"}` |
 
 Example:
@@ -46,7 +52,7 @@ curl -X POST http://localhost:9090/api/v1/auth/register \
   -d '{"name":"Kodcu","username":"kodcu_42","email":"kodcu@strata.dev","password":"sifre1234"}'
 ```
 
-Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials, invalid refresh token or invalid access token), `409` (username/email already taken).
+Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials or invalid/missing access token), `404` (organization, user or invitation not found), `409` (conflicts: duplicate username/email, organization slug, membership or invitation).
 
 ## Architecture
 

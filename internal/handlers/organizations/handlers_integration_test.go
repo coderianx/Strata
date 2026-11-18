@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/coderianx/Strata/internal/middlewares"
+	"github.com/coderianx/Strata/internal/models"
 	"github.com/coderianx/Strata/internal/repository"
 	"github.com/coderianx/Strata/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -552,6 +553,398 @@ func TestInviteUserToOrganizationHandlerIntegration(t *testing.T) {
 
 		if res.Error != "invalid_organization_id" {
 			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+}
+
+// insertOrg stores an organization owned by ownerID under a unique
+// slug and returns its id.
+func insertOrg(t *testing.T, ownerID int64, slug string) int64 {
+	t.Helper()
+
+	err := repository.CreateNewOrganization(
+		context.Background(),
+		"Strata "+slug,
+		slug,
+		"organization test fixture",
+		"",
+		ownerID,
+	)
+	if err != nil {
+		t.Fatalf("insert fixture organization: %v", err)
+	}
+
+	var orgID int64
+
+	err = store.DB.QueryRow(
+		context.Background(),
+		`SELECT id FROM organizations WHERE slug = $1`,
+		slug,
+	).Scan(&orgID)
+	if err != nil {
+		t.Fatalf("load fixture organization id: %v", err)
+	}
+
+	return orgID
+}
+
+// insertInvitation invites a user through the repository and returns
+// the pending invitation's id.
+func insertInvitation(t *testing.T, orgID, senderID int64, receiverUsername, role string) int64 {
+	t.Helper()
+
+	err := repository.InviteOrganization(
+		context.Background(),
+		orgID,
+		senderID,
+		receiverUsername,
+		role,
+	)
+	if err != nil {
+		t.Fatalf("insert fixture invitation: %v", err)
+	}
+
+	var invitationID int64
+
+	err = store.DB.QueryRow(
+		context.Background(),
+		`SELECT id FROM organization_invitations
+		 WHERE organization_id = $1 AND user_id = (SELECT id FROM users WHERE username = $2)`,
+		orgID,
+		receiverUsername,
+	).Scan(&invitationID)
+	if err != nil {
+		t.Fatalf("load fixture invitation id: %v", err)
+	}
+
+	return invitationID
+}
+
+func TestListMyInvitationsHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	receiverID := insertUser(t, "invitee", "invitee@strata.dev")
+	insertUser(t, "other_user", "other@strata.dev")
+
+	orgA := insertOrg(t, ownerID, "list-a")
+	orgB := insertOrg(t, ownerID, "list-b")
+
+	// The receiver has two pending invitations; the second one is
+	// accepted below, so only the first stays listed.
+	invitationA := insertInvitation(t, orgA, ownerID, "invitee", "member")
+	invitationB := insertInvitation(t, orgB, ownerID, "invitee", "owner")
+
+	// Another user's invitation must never show up in the receiver's
+	// list.
+	insertInvitation(t, orgA, ownerID, "other_user", "member")
+
+	if err := repository.AcceptInvitation(context.Background(), receiverID, invitationB); err != nil {
+		t.Fatalf("accept fixture invitation: %v", err)
+	}
+
+	rec := callAuthed(t, ListMyInvitationsHandler, receiverID, http.MethodGet, "/", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var res struct {
+		Invitations []models.ListReceivedInvitations `json:"invitations"`
+	}
+	decodeResponse(t, rec, &res)
+
+	if len(res.Invitations) != 1 {
+		t.Fatalf("invitations = %d, want 1: %+v", len(res.Invitations), res.Invitations)
+	}
+
+	inv := res.Invitations[0]
+
+	if inv.ID != invitationA {
+		t.Errorf("id = %d, want %d", inv.ID, invitationA)
+	}
+
+	if inv.OrganizationID != orgA {
+		t.Errorf("organization_id = %d, want %d", inv.OrganizationID, orgA)
+	}
+
+	if inv.InvitedBy != ownerID {
+		t.Errorf("invited_by = %d, want %d", inv.InvitedBy, ownerID)
+	}
+
+	if inv.Role != "member" {
+		t.Errorf("role = %q, want %q", inv.Role, "member")
+	}
+
+	if inv.Status != "pending" {
+		t.Errorf("status = %q, want %q", inv.Status, "pending")
+	}
+
+	if inv.CreatedAt.IsZero() {
+		t.Error("created_at is zero, want a timestamp")
+	}
+}
+
+func TestAcceptInvitationHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	receiverID := insertUser(t, "invitee", "invitee@strata.dev")
+
+	orgID := insertOrg(t, ownerID, "accept-org")
+	invitationID := insertInvitation(t, orgID, ownerID, "invitee", "member")
+
+	t.Run("accepts a pending invitation and grants membership", func(t *testing.T) {
+		rec := callInvitation(t, "accept", receiverID, strconv.FormatInt(invitationID, 10))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var res struct {
+			Message string `json:"message"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Message != "invitation_accepted" {
+			t.Errorf("message = %q, want %q", res.Message, "invitation_accepted")
+		}
+
+		var status string
+
+		err := store.DB.QueryRow(
+			context.Background(),
+			`SELECT status FROM organization_invitations WHERE id = $1`,
+			invitationID,
+		).Scan(&status)
+		if err != nil {
+			t.Fatalf("load invitation: %v", err)
+		}
+
+		if status != "accepted" {
+			t.Errorf("invitation status = %q, want %q", status, "accepted")
+		}
+
+		var memberRole string
+
+		err = store.DB.QueryRow(
+			context.Background(),
+			`SELECT role FROM organization_members
+			 WHERE organization_id = $1 AND user_id = $2`,
+			orgID,
+			receiverID,
+		).Scan(&memberRole)
+		if err != nil {
+			t.Fatalf("load membership: %v", err)
+		}
+
+		if memberRole != "member" {
+			t.Errorf("membership role = %q, want %q", memberRole, "member")
+		}
+	})
+
+	t.Run("cannot accept twice", func(t *testing.T) {
+		rec := callInvitation(t, "accept", receiverID, strconv.FormatInt(invitationID, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_not_found")
+		}
+	})
+
+	t.Run("cannot accept someone else's invitation", func(t *testing.T) {
+		orgID2 := insertOrg(t, ownerID, "accept-org-2")
+		otherInvitation := insertInvitation(t, orgID2, ownerID, "invitee", "member")
+
+		rec := callInvitation(t, "accept", ownerID, strconv.FormatInt(otherInvitation, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_not_found")
+		}
+	})
+
+	t.Run("unknown invitation id", func(t *testing.T) {
+		rec := callInvitation(t, "accept", receiverID, "424242")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_not_found")
+		}
+	})
+
+	t.Run("invalid invitation id", func(t *testing.T) {
+		rec := callInvitation(t, "accept", receiverID, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_invitation_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
+		}
+	})
+}
+
+func TestRejectInvitationHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	receiverID := insertUser(t, "invitee", "invitee@strata.dev")
+
+	orgID := insertOrg(t, ownerID, "reject-org")
+	invitationID := insertInvitation(t, orgID, ownerID, "invitee", "member")
+
+	t.Run("rejects a pending invitation without granting membership", func(t *testing.T) {
+		rec := callInvitation(t, "reject", receiverID, strconv.FormatInt(invitationID, 10))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var res struct {
+			Message string `json:"message"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Message != "invitation_rejected" {
+			t.Errorf("message = %q, want %q", res.Message, "invitation_rejected")
+		}
+
+		var status string
+
+		err := store.DB.QueryRow(
+			context.Background(),
+			`SELECT status FROM organization_invitations WHERE id = $1`,
+			invitationID,
+		).Scan(&status)
+		if err != nil {
+			t.Fatalf("load invitation: %v", err)
+		}
+
+		if status != "rejected" {
+			t.Errorf("invitation status = %q, want %q", status, "rejected")
+		}
+
+		var memberCount int
+
+		err = store.DB.QueryRow(
+			context.Background(),
+			`SELECT COUNT(*) FROM organization_members
+			 WHERE organization_id = $1 AND user_id = $2`,
+			orgID,
+			receiverID,
+		).Scan(&memberCount)
+		if err != nil {
+			t.Fatalf("count memberships: %v", err)
+		}
+
+		if memberCount != 0 {
+			t.Errorf("memberships = %d, want 0", memberCount)
+		}
+	})
+
+	t.Run("a rejected user can be invited again", func(t *testing.T) {
+		// The pending-only unique index allows a fresh invitation
+		// after a rejection.
+		err := repository.InviteOrganization(
+			context.Background(),
+			orgID,
+			ownerID,
+			"invitee",
+			"member",
+		)
+		if err != nil {
+			t.Errorf("re-invite after rejection = %v, want nil", err)
+		}
+	})
+
+	t.Run("cannot reject someone else's invitation", func(t *testing.T) {
+		orgID2 := insertOrg(t, ownerID, "reject-org-2")
+		otherInvitation := insertInvitation(t, orgID2, ownerID, "invitee", "member")
+
+		rec := callInvitation(t, "reject", ownerID, strconv.FormatInt(otherInvitation, 10))
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_not_found")
+		}
+	})
+
+	t.Run("unknown invitation id", func(t *testing.T) {
+		rec := callInvitation(t, "reject", receiverID, "424242")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_not_found")
+		}
+	})
+
+	t.Run("invalid invitation id", func(t *testing.T) {
+		rec := callInvitation(t, "reject", receiverID, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_invitation_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
 		}
 	})
 }

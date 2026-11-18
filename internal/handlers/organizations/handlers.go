@@ -303,3 +303,204 @@ func InviteUserToOrganizationHandler(
 		"message": "user_invited",
 	})
 }
+
+func ListMyInvitationsHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	invitations, err := repository.ListReceivedInvitations(
+		r.Context(),
+		claims.ID,
+	)
+
+	if err != nil {
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"invitations": invitations,
+	})
+
+}
+
+func AcceptInvitationHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	invitationID, err := strconv.ParseInt(
+		chi.URLParam(r, "invitation_id"), 10, 64,
+	)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_invitation_id",
+		})
+
+		return
+	}
+
+	if invitationID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_invitation_id",
+		})
+
+		return
+	}
+
+	err = repository.AcceptInvitation(
+		r.Context(),
+		claims.ID,
+		invitationID,
+	)
+
+	if err != nil {
+		if errors.Is(err, repository.ErrInvitationNotFound) {
+			w.WriteHeader(404)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "invitation_not_found",
+			})
+
+			return
+		}
+
+		if errors.Is(err, repository.ErrUserAlreadyMember) {
+			w.WriteHeader(409)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "user_already_member",
+			})
+
+			return
+		}
+
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"message": "invitation_accepted",
+	})
+}
+
+func RejectInvitationHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	w.Header().Set("Content-Type", "application/json")
+
+	claims, ok := middlewares.UserFromContext(r.Context())
+
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "unauthorized",
+		})
+
+		return
+	}
+
+	invitationID, err := strconv.ParseInt(
+		chi.URLParam(r, "invitation_id"), 10, 64,
+	)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_invitation_id",
+		})
+
+		return
+	}
+
+	if invitationID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_invitation_id",
+		})
+
+		return
+	}
+
+	err = repository.RejectInvitation(
+		r.Context(),
+		claims.ID,
+		invitationID,
+	)
+
+	if err != nil {
+		if errors.Is(err, repository.ErrInvitationNotFound) {
+			w.WriteHeader(404)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "invitation_not_found",
+			})
+
+			return
+		}
+
+		w.WriteHeader(500)
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": "internal_error",
+		})
+
+		return
+	}
+
+	w.WriteHeader(200)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"message": "invitation_rejected",
+	})
+}

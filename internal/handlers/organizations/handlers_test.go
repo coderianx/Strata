@@ -87,6 +87,45 @@ func callInvite(t *testing.T, userID int64, organizationID, body string) *httpte
 	return rec
 }
 
+// invitationRouter mounts the accept and reject handlers behind the
+// middleware with route patterns, so the invitation_id URL parameter
+// is populated exactly like in production.
+func invitationRouter() http.Handler {
+	router := chi.NewRouter()
+
+	router.Route("/api/v1/invitations", func(r chi.Router) {
+		r.With(middlewares.Auth).Post("/{invitation_id}/accept", AcceptInvitationHandler)
+		r.With(middlewares.Auth).Post("/{invitation_id}/reject", RejectInvitationHandler)
+	})
+
+	return router
+}
+
+// callInvitation sends an authenticated accept or reject request
+// through the router. The invitation id only has to parse: these
+// tests never reach the database.
+func callInvitation(
+	t *testing.T,
+	action string,
+	userID int64,
+	invitationID string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/invitations/"+invitationID+"/"+action,
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer "+makeToken(t, testSecret, userID))
+
+	rec := httptest.NewRecorder()
+
+	invitationRouter().ServeHTTP(rec, req)
+
+	return rec
+}
+
 // makeToken signs an HS256 access token for the given user,
 // mirroring the tokens the auth handlers issue after login.
 func makeToken(t *testing.T, secret string, userID int64) string {
@@ -332,6 +371,105 @@ func TestInviteUserToOrganizationHandler(t *testing.T) {
 					t.Errorf("error = %q, want %q", res.Error, tt.wantError)
 				}
 			})
+		}
+	})
+}
+
+func TestListMyInvitationsHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		rec := callHandler(t, ListMyInvitationsHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+}
+
+func TestAcceptInvitationHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		rec := callHandler(t, AcceptInvitationHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+
+	t.Run("invalid invitation id", func(t *testing.T) {
+		// A route the pattern cannot parse must fail before anything
+		// else is read.
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callInvitation(t, "accept", 42, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_invitation_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
+		}
+	})
+}
+
+func TestRejectInvitationHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		rec := callHandler(t, RejectInvitationHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+
+	t.Run("invalid invitation id", func(t *testing.T) {
+		// A route the pattern cannot parse must fail before anything
+		// else is read.
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callInvitation(t, "reject", 42, "not-a-number")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_invitation_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_invitation_id")
 		}
 	})
 }

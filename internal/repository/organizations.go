@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/coderianx/Strata/internal/models"
 	"github.com/coderianx/Strata/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -228,6 +229,167 @@ func InviteOrganization(
 		}
 
 		return fmt.Errorf("repository: insert invitation: %w", err)
+	}
+
+	return nil
+}
+
+// ListReceivedInvitations returns the receiver's pending invitations,
+// oldest first. Only pending rows are actionable, so accepted and
+// rejected history is intentionally left out.
+func ListReceivedInvitations(
+	ctx context.Context,
+	receiverID int64,
+) ([]models.ListReceivedInvitations, error) {
+	rows, err := store.DB.Query(
+		ctx,
+		`
+		SELECT id, organization_id, user_id, invited_by, role, status, created_at
+		FROM organization_invitations
+		WHERE user_id = $1 AND status = 'pending'
+		ORDER BY created_at;
+		`,
+		receiverID,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("repository: list received invitations: %w", err)
+	}
+
+	defer rows.Close()
+
+	// Start with an empty slice so an empty result encodes as []
+	// instead of null.
+	invitations := []models.ListReceivedInvitations{}
+
+	for rows.Next() {
+		var invitation models.ListReceivedInvitations
+
+		err = rows.Scan(
+			&invitation.ID,
+			&invitation.OrganizationID,
+			&invitation.UserID,
+			&invitation.InvitedBy,
+			&invitation.Role,
+			&invitation.Status,
+			&invitation.CreatedAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("repository: scan received invitation: %w", err)
+		}
+
+		invitations = append(invitations, invitation)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repository: list received invitations: %w", err)
+	}
+
+	return invitations, nil
+}
+
+// ErrInvitationNotFound is returned by AcceptInvitation and
+// RejectInvitation when no pending invitation matches the id and the
+// receiver. The two cases are indistinguishable on purpose: revealing
+// "exists but belongs to someone else" would leak other users'
+// invitations.
+var ErrInvitationNotFound = errors.New("repository: invitation not found")
+
+// AcceptInvitation turns the receiver's pending invitation into an
+// organization membership with the invited role. The invitation is
+// claimed atomically by its status update, so two concurrent accepts
+// cannot both win, and a failed membership insert rolls the claim back
+// with the transaction.
+func AcceptInvitation(
+	ctx context.Context,
+	receiverID int64,
+	invitationID int64,
+) error {
+	tx, err := store.DB.Begin(ctx)
+
+	if err != nil {
+		return fmt.Errorf("repository: begin accept invitation: %w", err)
+	}
+
+	// Rollback is a no-op after a successful commit, so every early
+	// return below safely discards the partial work.
+	defer tx.Rollback(ctx)
+
+	var organizationID int64
+	var role string
+
+	err = tx.QueryRow(
+		ctx,
+		`
+		UPDATE organization_invitations
+		SET status = 'accepted'
+		WHERE id = $1 AND user_id = $2 AND status = 'pending'
+		RETURNING organization_id, role;
+		`,
+		invitationID,
+		receiverID,
+	).Scan(&organizationID, &role)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvitationNotFound
+		}
+
+		return fmt.Errorf("repository: claim invitation: %w", err)
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		`
+		INSERT INTO organization_members (organization_id, user_id, role)
+		VALUES ($1, $2, $3);
+		`,
+		organizationID,
+		receiverID,
+		role,
+	)
+
+	if err != nil {
+		if store.IsUniqueErr(err) {
+			return ErrUserAlreadyMember
+		}
+
+		return fmt.Errorf("repository: insert membership: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("repository: commit accept invitation: %w", err)
+	}
+
+	return nil
+}
+
+// RejectInvitation marks the receiver's pending invitation as
+// rejected instead of deleting it: the pending-only unique index then
+// lets the organization invite the same user again later.
+func RejectInvitation(
+	ctx context.Context,
+	receiverID int64,
+	invitationID int64,
+) error {
+	tag, err := store.DB.Exec(
+		ctx,
+		`
+		UPDATE organization_invitations
+		SET status = 'rejected'
+		WHERE id = $1 AND user_id = $2 AND status = 'pending';
+		`,
+		invitationID,
+		receiverID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("repository: reject invitation: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrInvitationNotFound
 	}
 
 	return nil

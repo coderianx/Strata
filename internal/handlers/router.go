@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/coderianx/Strata/internal/handlers/auth"
+	"github.com/coderianx/Strata/internal/handlers/organizations"
 	"github.com/coderianx/Strata/internal/middlewares"
 	"github.com/go-chi/chi/v5"
 )
@@ -20,6 +21,20 @@ func APIRouter() *chi.Mux {
 		r.Post("/login", auth.LoginHandler)
 		r.Post("/refresh", auth.RefreshHandler)
 		r.With(middlewares.Auth).Get("/me", auth.GetMeHandler)
+	})
+
+	// organizations
+	router.Route("/api/v1/organizations", func(r chi.Router) {
+		r.With(middlewares.Auth).Post("/", organizations.CreateNewOrganization)
+		r.With(middlewares.Auth).Delete("/{organization_id}", organizations.DeleteOrganization)
+		r.With(middlewares.Auth).Post("/{organization_id}/invite", organizations.InviteUserToOrganizationHandler)
+	})
+
+	// invitations
+	router.Route("/api/v1/invitations", func(r chi.Router) {
+		r.With(middlewares.Auth).Get("/", organizations.ListMyInvitationsHandler)
+		r.With(middlewares.Auth).Post("/{invitation_id}/accept", organizations.AcceptInvitationHandler)
+		r.With(middlewares.Auth).Post("/{invitation_id}/reject", organizations.RejectInvitationHandler)
 	})
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
