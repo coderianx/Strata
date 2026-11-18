@@ -11,6 +11,7 @@ import (
 
 	"github.com/coderianx/Strata/internal/middlewares"
 	"github.com/coderianx/Strata/internal/models"
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -49,6 +50,39 @@ func callAuthed(
 	rec := httptest.NewRecorder()
 
 	middlewares.Auth(handler).ServeHTTP(rec, req)
+
+	return rec
+}
+
+// inviteRouter mounts the invite handler behind the middleware with
+// a route pattern, so the organization_id URL parameter is populated
+// exactly like in production.
+func inviteRouter() http.Handler {
+	router := chi.NewRouter()
+
+	router.Route("/api/v1/organizations", func(r chi.Router) {
+		r.With(middlewares.Auth).Post("/{organization_id}/invite", InviteUserToOrganizationHandler)
+	})
+
+	return router
+}
+
+// callInvite sends an authenticated invite request through the
+// router. The organization id only has to parse: these tests never
+// reach the database.
+func callInvite(t *testing.T, userID int64, organizationID, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/organizations/"+organizationID+"/invite",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Authorization", "Bearer "+makeToken(t, testSecret, userID))
+
+	rec := httptest.NewRecorder()
+
+	inviteRouter().ServeHTTP(rec, req)
 
 	return rec
 }
@@ -204,6 +238,100 @@ func TestDeleteOrganization(t *testing.T) {
 
 		if res.Error != "invalid_organization_id" {
 			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+}
+
+func TestInviteUserToOrganizationHandler(t *testing.T) {
+	t.Run("request without the middleware", func(t *testing.T) {
+		// Mounting the handler unprotected must fail safely instead
+		// of serving anonymous requests.
+		rec := callHandler(t, InviteUserToOrganizationHandler, "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "unauthorized" {
+			t.Errorf("error = %q, want %q", res.Error, "unauthorized")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		// A route the pattern cannot parse must fail before anything
+		// else is read.
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callInvite(t, 42, "not-a-number", "")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+
+	t.Run("malformed JSON", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", testSecret)
+
+		rec := callInvite(t, 42, "42", `{"username":`)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_request" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_request")
+		}
+	})
+
+	t.Run("validation failures", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", testSecret)
+
+		tests := []struct {
+			name      string
+			body      string
+			wantError string
+		}{
+			{"missing username", `{"role":"member"}`, "username is required"},
+			{"unknown role", `{"username":"kodcu_42","role":"superadmin"}`, "role must be one of: member, owner"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				rec := callInvite(t, 42, "42", tt.body)
+
+				if rec.Code != http.StatusBadRequest {
+					t.Errorf("status = %d, want %d; body = %s",
+						rec.Code, http.StatusBadRequest, rec.Body.String())
+				}
+
+				var res struct {
+					Error string `json:"error"`
+				}
+				decodeResponse(t, rec, &res)
+
+				if res.Error != tt.wantError {
+					t.Errorf("error = %q, want %q", res.Error, tt.wantError)
+				}
+			})
 		}
 	})
 }

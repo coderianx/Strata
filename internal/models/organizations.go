@@ -6,3 +6,8 @@ type CreateNewOrganizationReq struct {
 	Description string `json:"description"`
 	LogoURL     string `json:"logo_url"`
 }
+
+type InviteSomeoneToOrganizationReq struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}

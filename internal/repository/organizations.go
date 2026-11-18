@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/coderianx/Strata/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrOrganizationAlreadyExists is returned by CreateNewOrganization when
@@ -116,6 +117,117 @@ func DeleteOrganization(
 
 	if tag.RowsAffected() == 0 {
 		return ErrOrganizationNotFound
+	}
+
+	return nil
+}
+
+// ErrUserAlreadyMember is returned by InviteOrganization when the
+// receiver is already a member of the organization, so handlers can
+// map it to a 409 Conflict.
+var ErrUserAlreadyMember = errors.New("repository: user already member this organization")
+
+// ErrInvitationAlreadyExists is returned by InviteOrganization when
+// the receiver already has a pending invitation, so handlers can map
+// it to a 409 Conflict.
+var ErrInvitationAlreadyExists = errors.New("repository: invitation already exists")
+
+func InviteOrganization(
+	ctx context.Context,
+	organizationID int64,
+	senderID int64,
+	receiverUsername string,
+	role string,
+) error {
+	var orgIsExists bool
+
+	err := store.DB.QueryRow(
+		ctx,
+		`
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM organizations
+		    WHERE id = $1 AND owner_id = $2
+		);
+		`,
+		organizationID,
+		senderID,
+	).Scan(&orgIsExists)
+
+	if err != nil {
+		return err
+	}
+
+	if !orgIsExists {
+		return ErrOrganizationNotFound
+	}
+
+	var receiverID int64
+
+	err = store.DB.QueryRow(
+		ctx,
+		`
+		SELECT id
+		FROM users
+		WHERE username = $1
+		`,
+		receiverUsername,
+	).Scan(
+		&receiverID,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+
+		return err
+	}
+
+	var ReceiverAlreadyMember bool
+
+	err = store.DB.QueryRow(
+		ctx,
+		`
+		SELECT EXISTS (
+			SELECT 1
+			FROM organization_members
+			WHERE organization_id = $1 AND user_id = $2
+		);
+		`,
+		organizationID, receiverID,
+	).Scan(
+		&ReceiverAlreadyMember,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if ReceiverAlreadyMember {
+		return ErrUserAlreadyMember
+	}
+
+	_, err = store.DB.Exec(
+		ctx,
+		`
+		INSERT INTO organization_invitations (
+			organization_id, user_id, invited_by, role
+		)
+		VALUES ($1,$2,$3,$4);
+		`,
+		organizationID,
+		receiverID,
+		senderID,
+		role,
+	)
+
+	if err != nil {
+		if store.IsUniqueErr(err) {
+			return ErrInvitationAlreadyExists
+		}
+
+		return fmt.Errorf("repository: insert invitation: %w", err)
 	}
 
 	return nil

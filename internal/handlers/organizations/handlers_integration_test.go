@@ -372,3 +372,186 @@ func TestDeleteOrganizationIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestInviteUserToOrganizationHandlerIntegration(t *testing.T) {
+	requireDB(t)
+
+	ownerID := insertUser(t, "org_owner", "owner@strata.dev")
+	receiverID := insertUser(t, "invitee", "invitee@strata.dev")
+
+	if err := repository.CreateNewOrganization(
+		context.Background(),
+		"Strata",
+		"strata",
+		"organization test fixture",
+		"",
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert fixture organization: %v", err)
+	}
+
+	var orgID int64
+
+	err := store.DB.QueryRow(
+		context.Background(),
+		`SELECT id FROM organizations WHERE slug = $1`,
+		"strata",
+	).Scan(&orgID)
+	if err != nil {
+		t.Fatalf("load fixture organization id: %v", err)
+	}
+
+	orgIDParam := strconv.FormatInt(orgID, 10)
+
+	t.Run("invites a user as a member", func(t *testing.T) {
+		rec := callInvite(t, ownerID, orgIDParam, `{"username":"invitee","role":"member"}`)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusCreated, rec.Body.String())
+		}
+
+		var res struct {
+			Message string `json:"message"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Message != "user_invited" {
+			t.Errorf("message = %q, want %q", res.Message, "user_invited")
+		}
+
+		var invitedBy int64
+		var role, status string
+
+		err := store.DB.QueryRow(
+			context.Background(),
+			`SELECT invited_by, role, status FROM organization_invitations
+			 WHERE organization_id = $1 AND user_id = $2`,
+			orgID,
+			receiverID,
+		).Scan(&invitedBy, &role, &status)
+		if err != nil {
+			t.Fatalf("load invitation row: %v", err)
+		}
+
+		if invitedBy != ownerID {
+			t.Errorf("invited_by = %d, want %d", invitedBy, ownerID)
+		}
+
+		if role != "member" {
+			t.Errorf("role = %q, want %q", role, "member")
+		}
+
+		if status != "pending" {
+			t.Errorf("status = %q, want %q", status, "pending")
+		}
+	})
+
+	t.Run("a pending invitation cannot be duplicated", func(t *testing.T) {
+		rec := callInvite(t, ownerID, orgIDParam, `{"username":"invitee","role":"owner"}`)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusConflict, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invitation_already_exists" {
+			t.Errorf("error = %q, want %q", res.Error, "invitation_already_exists")
+		}
+	})
+
+	t.Run("a member cannot be invited twice", func(t *testing.T) {
+		// The owner is already a member from the organization's
+		// creation.
+		rec := callInvite(t, ownerID, orgIDParam, `{"username":"org_owner","role":"member"}`)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusConflict, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "user_already_member" {
+			t.Errorf("error = %q, want %q", res.Error, "user_already_member")
+		}
+	})
+
+	t.Run("unknown receiver", func(t *testing.T) {
+		rec := callInvite(t, ownerID, orgIDParam, `{"username":"ghost_user","role":"member"}`)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "user_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "user_not_found")
+		}
+	})
+
+	t.Run("only the owner can invite", func(t *testing.T) {
+		rec := callInvite(t, receiverID, orgIDParam, `{"username":"invitee","role":"member"}`)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d; body = %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("unknown organization", func(t *testing.T) {
+		rec := callInvite(t, ownerID, "424242", `{"username":"invitee","role":"member"}`)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "organization_not_found" {
+			t.Errorf("error = %q, want %q", res.Error, "organization_not_found")
+		}
+	})
+
+	t.Run("invalid organization id", func(t *testing.T) {
+		rec := callInvite(t, ownerID, "not-a-number", `{"username":"invitee","role":"member"}`)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+
+		var res struct {
+			Error string `json:"error"`
+		}
+		decodeResponse(t, rec, &res)
+
+		if res.Error != "invalid_organization_id" {
+			t.Errorf("error = %q, want %q", res.Error, "invalid_organization_id")
+		}
+	})
+}

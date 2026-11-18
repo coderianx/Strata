@@ -154,3 +154,57 @@ func TestValidateCreateNewOrganizationReq(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeInviteSomeoneToOrganizationReq(t *testing.T) {
+	req := models.InviteSomeoneToOrganizationReq{
+		Username: "  kodcu_42  ",
+		Role:     "  OWNER  ",
+	}
+
+	normalizeInviteSomeoneToOrganizationReq(&req)
+
+	if req.Username != "kodcu_42" {
+		t.Errorf("username = %q, want %q", req.Username, "kodcu_42")
+	}
+
+	if req.Role != "owner" {
+		t.Errorf("role = %q, want %q", req.Role, "owner")
+	}
+}
+
+func TestNormalizeDefaultsEmptyRoleToMember(t *testing.T) {
+	req := models.InviteSomeoneToOrganizationReq{Username: "kodcu_42"}
+
+	normalizeInviteSomeoneToOrganizationReq(&req)
+
+	if req.Role != "member" {
+		t.Errorf("role = %q, want the default %q", req.Role, "member")
+	}
+}
+
+func TestValidateInviteSomeoneToOrganizationReq(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     models.InviteSomeoneToOrganizationReq
+		wantErr bool
+	}{
+		{"valid member invite", models.InviteSomeoneToOrganizationReq{Username: "kodcu_42", Role: "member"}, false},
+		{"valid owner invite", models.InviteSomeoneToOrganizationReq{Username: "kodcu_42", Role: "owner"}, false},
+		{"missing username", models.InviteSomeoneToOrganizationReq{Role: "member"}, true},
+		{"whitespace only username", models.InviteSomeoneToOrganizationReq{Username: "   ", Role: "member"}, true},
+		{"unknown role", models.InviteSomeoneToOrganizationReq{Username: "kodcu_42", Role: "superadmin"}, true},
+		{"uppercase role", models.InviteSomeoneToOrganizationReq{Username: "kodcu_42", Role: "OWNER"}, false},
+		{"empty role defaults to member", models.InviteSomeoneToOrganizationReq{Username: "kodcu_42"}, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			normalizeInviteSomeoneToOrganizationReq(&c.req)
+
+			err := validateInviteSomeoneToOrganizationReq(c.req)
+			if (err != nil) != c.wantErr {
+				t.Errorf("validateInviteSomeoneToOrganizationReq(%+v) = %v, wantErr %v", c.req, err, c.wantErr)
+			}
+		})
+	}
+}

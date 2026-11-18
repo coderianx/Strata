@@ -136,3 +136,41 @@ func validateCreateNewOrganizationReq(req models.CreateNewOrganizationReq) error
 
 	return nil
 }
+
+// allowedRoles lists the roles an invitation can assign. They mirror
+// the "owner or member" comment on the organization_members.role
+// column.
+var allowedRoles = map[string]struct{}{
+	"member": {},
+	"owner":  {},
+}
+
+// normalizeInviteSomeoneToOrganizationReq trims the fields and
+// lowercases the role so the exact values that pass validation are
+// the ones stored. An omitted role defaults to "member", mirroring
+// the role column's DEFAULT.
+func normalizeInviteSomeoneToOrganizationReq(req *models.InviteSomeoneToOrganizationReq) {
+	req.Username = strings.TrimSpace(req.Username)
+	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
+
+	if req.Role == "" {
+		req.Role = "member"
+	}
+}
+
+// validateInviteSomeoneToOrganizationReq only checks that the
+// username is present, not the registration rules: like LoginHandler
+// with emails, an invalid username can never match a stored user, so
+// the lookup answers it. The role must be one of the assignable
+// roles.
+func validateInviteSomeoneToOrganizationReq(req models.InviteSomeoneToOrganizationReq) error {
+	if req.Username == "" {
+		return errors.New("username is required")
+	}
+
+	if _, ok := allowedRoles[req.Role]; !ok {
+		return errors.New("role must be one of: member, owner")
+	}
+
+	return nil
+}

@@ -145,5 +145,37 @@ func CreateTables() error {
 		return fmt.Errorf("store: create 'organization_members' table: %w", err)
 	}
 
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS organization_invitations (
+		    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+		    organization_id BIGINT NOT NULL
+		        REFERENCES organizations(id) ON DELETE CASCADE,
+
+		    user_id BIGINT NOT NULL
+		        REFERENCES users(id) ON DELETE CASCADE,
+
+		    invited_by BIGINT NOT NULL
+		        REFERENCES users(id) ON DELETE CASCADE,
+
+		    role TEXT NOT NULL DEFAULT 'member',
+
+		    status TEXT NOT NULL DEFAULT 'pending',
+
+		    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+
+		CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_invitation
+		ON organization_invitations (organization_id, user_id)
+		WHERE status = 'pending';
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'organization_invitaions' table: %w", err)
+	}
+
 	return nil
 }
