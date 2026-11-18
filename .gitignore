@@ -1,0 +1,31 @@
+# Binaries
+/strata
+cmd/strata/strata
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries, coverage reports and profiles
+*.test
+*.out
+*.prof
+coverage.*
+
+# Local environment files (hold secrets: JWT_SECRET, DB_URL)
+.env
+.env.*
+!.env.example
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor, OS and Obsidian state
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+StrataBrain/
