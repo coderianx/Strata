@@ -1,3 +1,5 @@
+// Package organizations implements the organization, membership and
+// invitation HTTP endpoints.
 package organizations
 
 import (
@@ -12,6 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// CreateNewOrganizationHandler validates the creation body, stores
+// the organization with its owner membership and settings, and
+// answers 201. Invalid bodies get 400, taken slugs 409.
 func CreateNewOrganizationHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -96,6 +101,9 @@ func CreateNewOrganizationHandler(
 	})
 }
 
+// DeleteOrganization removes the caller's organization and answers
+// 200. Missing and not-owned organizations are indistinguishably
+// 404.
 func DeleteOrganization(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -171,6 +179,11 @@ func DeleteOrganization(
 	})
 }
 
+// InviteUserToOrganizationHandler invites an existing user to the
+// caller's organization and answers 201. The caller must be the
+// organization's owner; missing and not-owned organizations are
+// indistinguishably 404, an existing member or a duplicate pending
+// invitation gets 409.
 func InviteUserToOrganizationHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -306,6 +319,8 @@ func InviteUserToOrganizationHandler(
 	})
 }
 
+// ListMyInvitationsHandler returns the caller's pending invitations
+// as {"invitations": [...]}.
 func ListMyInvitationsHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -347,6 +362,10 @@ func ListMyInvitationsHandler(
 
 }
 
+// AcceptInvitationHandler turns one of the caller's pending
+// invitations into a membership and answers 200. Unknown, foreign or
+// already-answered invitations are 404; a membership conflict is
+// 409.
 func AcceptInvitationHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -432,6 +451,10 @@ func AcceptInvitationHandler(
 	})
 }
 
+// RejectInvitationHandler marks one of the caller's pending
+// invitations as rejected and answers 200, letting the organization
+// invite the same user again later. Unknown or foreign invitations
+// are 404.
 func RejectInvitationHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -507,6 +530,8 @@ func RejectInvitationHandler(
 	})
 }
 
+// GetMyOrganizationsHandler returns the organizations the caller is
+// a member of as {"organizations": [...]}.
 func GetMyOrganizationsHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -547,6 +572,10 @@ func GetMyOrganizationsHandler(
 	})
 }
 
+// OrganizationMembersHandler returns an organization's member
+// list. Members always see it; outsiders get an indistinguishable
+// 404 on private organizations and 403 on public ones with hidden
+// member lists.
 func OrganizationMembersHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -632,6 +661,9 @@ func OrganizationMembersHandler(
 	})
 }
 
+// RemoveMemberHandler removes a member from the caller's
+// organization. The caller must be its owner (404 otherwise) and
+// cannot remove themselves (409).
 func RemoveMemberHandler(
 	w http.ResponseWriter,
 	r *http.Request,

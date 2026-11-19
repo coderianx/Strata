@@ -1,3 +1,6 @@
+// Package config prepares the Strata environment: it creates
+// ~/.strata with a generated JWT secret on first run and exposes the
+// loaded environment variables.
 package config
 
 import (
@@ -14,6 +17,10 @@ import (
 
 var strataPath string
 
+// Init prepares the Strata environment: it creates the ~/.strata
+// folder, writes a freshly generated JWT secret into ~/.strata/.env
+// on first run (never overwriting an existing file) and loads the
+// file into the process environment.
 func Init() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -66,6 +73,8 @@ func Init() error {
 	return nil
 }
 
+// CheckEnvs reports the required environment variables that are
+// empty or missing, naming the env file to fill in.
 func CheckEnvs() error {
 	var missing []string
 
@@ -86,6 +95,8 @@ func CheckEnvs() error {
 	return nil
 }
 
+// GetEnv returns the value of the environment variable name, or an
+// empty string when it is not set.
 func GetEnv(name string) string {
 	return os.Getenv(name)
 }

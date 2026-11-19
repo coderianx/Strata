@@ -1,3 +1,5 @@
+// Package auth implements the registration, login and token refresh
+// HTTP endpoints.
 package auth
 
 import (
@@ -12,6 +14,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// RegisterHandler validates the registration body, hashes the
+// password with bcrypt and stores the user. It answers 201 with the
+// created user, 400 for invalid or incomplete bodies and 409 when
+// the username or email is already taken.
 func RegisterHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -99,6 +105,10 @@ func RegisterHandler(
 	})
 }
 
+// LoginHandler verifies the login credentials against the stored
+// bcrypt hash and issues an access/refresh token pair. It answers
+// 200 with the tokens, 400 for invalid bodies and 401 for wrong
+// credentials.
 func LoginHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -222,6 +232,9 @@ func LoginHandler(
 	})
 }
 
+// RefreshHandler consumes a single-use refresh token and issues a
+// new access/refresh token pair. Unknown, expired or replayed
+// tokens get 401; invalid bodies 400.
 func RefreshHandler(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -352,11 +365,9 @@ func RefreshHandler(
 	})
 }
 
-// GetMe returns the authenticated user's id and username. It must be
-// mounted behind middlewares.Auth, which validates the access token
-// and attaches the user to the request context; a request that never
-// passed through the middleware gets the shared 401 invalid_token
-// response.
+// GetMeHandler returns the authenticated user's id and username. It
+// must be mounted behind middlewares.Auth; requests that skipped the
+// middleware get the shared 401 invalid_token response.
 func GetMeHandler(
 	w http.ResponseWriter,
 	r *http.Request,

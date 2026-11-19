@@ -154,6 +154,12 @@ var ErrUserAlreadyMember = errors.New("repository: user already member this orga
 // it to a 409 Conflict.
 var ErrInvitationAlreadyExists = errors.New("repository: invitation already exists")
 
+// InviteOrganization stores a pending invitation for the receiver,
+// after verifying the sender owns the organization. It answers
+// ErrOrganizationNotFound for missing and not-owned organizations
+// alike, ErrUserNotFound for unknown receivers, ErrUserAlreadyMember
+// for existing members and ErrInvitationAlreadyExists for a
+// duplicate pending invitation.
 func InviteOrganization(
 	ctx context.Context,
 	organizationID int64,
@@ -416,6 +422,8 @@ func RejectInvitation(
 	return nil
 }
 
+// GetMyOrganizations returns the organizations the user is a member
+// of.
 func GetMyOrganizations(
 	ctx context.Context,
 	userID int64,

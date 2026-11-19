@@ -11,8 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// DB is the shared PostgreSQL connection pool, set by
+// ConnectDatabase and read by the repository layer; it is nil before
+// that.
 var DB *pgxpool.Pool
 
+// ConnectDatabase connects to the PostgreSQL instance named by the
+// DB_URL environment variable and pings it with a 5 second timeout.
+// On any failure the pool is closed and DB is left nil.
 func ConnectDatabase() error {
 	var err error
 
@@ -43,6 +49,10 @@ func ConnectDatabase() error {
 	return nil
 }
 
+// CreateTables creates every Strata table with IF NOT EXISTS, so it
+// is safe to run on every startup. Existing tables are never
+// rewritten; the email patch keeps databases created before the
+// email column usable.
 func CreateTables() error {
 
 	_, err := DB.Exec(
@@ -181,7 +191,7 @@ func CreateTables() error {
 		context.Background(),
 		`
 		CREATE TABLE IF NOT EXISTS organization_settings (
-		    organization_id BIGINT PRIMARY KEY
+		    organization_id BIGINT NOT NULL
 		        REFERENCES organizations(id) ON DELETE CASCADE,
 
 		    visibility BOOLEAN NOT NULL DEFAULT FALSE, -- false = private, true = public
@@ -195,6 +205,34 @@ func CreateTables() error {
 
 	if err != nil {
 		return fmt.Errorf("store: create 'organization_settings' table: %w", err)
+	}
+
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS teams (
+		    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+		    organization_id BIGINT NOT NULL
+		        REFERENCES organizations(id) ON DELETE CASCADE,
+
+		    name TEXT NOT NULL,
+		    identifier TEXT NOT NULL,
+		    description TEXT,
+
+		    created_by BIGINT NOT NULL
+		        REFERENCES users(id),
+
+		    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+		    UNIQUE (organization_id, identifier)
+		);
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'teams' table: %w", err)
 	}
 
 	return nil

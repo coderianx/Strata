@@ -42,6 +42,8 @@ Strata is currently **under development**. The core architecture and the authent
 | `GET /api/v1/my-organizations` | Bearer token | `200` — `{"organizations":[...]}` |
 | `GET /api/v1/organizations/{organization_id}/members` | Bearer token | `200` — `{"members":[...]}` |
 | `DELETE /api/v1/organizations/{organization_id}/members/{member_id}` | Bearer token | `200` — `{"message":"member_removed"}` |
+| `POST /api/v1/organizations/{organization_id}/teams` | Bearer + `name`, `identifier`, `description` | `201` — `{"message":"team_created","teamID"}` |
+| `DELETE /api/v1/organizations/{organization_id}/teams/{team_id}` | Bearer token | `200` — `{"message":"team_deleted"}` |
 | `GET /api/v1/invitations` | Bearer token | `200` — `{"invitations":[...]}` |
 | `POST /api/v1/invitations/{invitation_id}/accept` | Bearer token | `200` — `{"message":"invitation_accepted"}` |
 | `POST /api/v1/invitations/{invitation_id}/reject` | Bearer token | `200` — `{"message":"invitation_rejected"}` |

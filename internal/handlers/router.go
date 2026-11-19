@@ -1,3 +1,5 @@
+// Package handlers builds the top-level HTTP router with every
+// route group mounted under it.
 package handlers
 
 import (
@@ -6,6 +8,7 @@ import (
 
 	"github.com/coderianx/Strata/internal/handlers/auth"
 	"github.com/coderianx/Strata/internal/handlers/organizations"
+	"github.com/coderianx/Strata/internal/handlers/teams"
 	"github.com/coderianx/Strata/internal/middlewares"
 	"github.com/go-chi/chi/v5"
 )
@@ -30,6 +33,8 @@ func APIRouter() *chi.Mux {
 		r.With(middlewares.Auth).Post("/{organization_id}/invite", organizations.InviteUserToOrganizationHandler)
 		r.With(middlewares.Auth).Get("/{organization_id}/members", organizations.OrganizationMembersHandler)
 		r.With(middlewares.Auth).Delete("/{organization_id}/members/{member_id}", organizations.RemoveMemberHandler)
+		r.With(middlewares.Auth).Post("/{organization_id}/teams", teams.CreateNewTeamHandler)
+		r.With(middlewares.Auth).Delete("/{organization_id}/teams/{team_id}", teams.DeleteTeamHandler)
 	})
 
 	// my organizations

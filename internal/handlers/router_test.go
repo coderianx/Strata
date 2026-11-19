@@ -138,6 +138,20 @@ func TestAPIRouterRoutes(t *testing.T) {
 			"{\"error\":\"invalid_token\"}\n",
 		},
 		{
+			"create team without token",
+			http.MethodPost,
+			"/api/v1/organizations/42/teams",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
+			"delete team without token",
+			http.MethodDelete,
+			"/api/v1/organizations/42/teams/42",
+			http.StatusUnauthorized,
+			"{\"error\":\"invalid_token\"}\n",
+		},
+		{
 			"register rejects other methods",
 			http.MethodGet,
 			"/api/v1/auth/register",
