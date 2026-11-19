@@ -93,3 +93,40 @@ func validateCreateNewTeamReq(req models.CreateNewTeamReq) error {
 
 	return nil
 }
+
+// allowedTeamRoles lists the roles an add-team-member request can
+// assign. The 'creator' role belongs to the team's creator alone and
+// is deliberately not assignable.
+var allowedTeamRoles = map[string]struct{}{
+	"member": {},
+	"admin":  {},
+}
+
+// normalizeAddNewMemberToTeamReq trims the fields and lowercases the
+// role so the exact values that pass validation are the ones stored.
+// An omitted role defaults to "member", mirroring the team_members
+// role column's DEFAULT.
+func normalizeAddNewMemberToTeamReq(req *models.AddNewMemberToTeamReq) {
+	req.Username = strings.TrimSpace(req.Username)
+	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
+
+	if req.Role == "" {
+		req.Role = "member"
+	}
+}
+
+// validateAddNewMemberToTeamReq only checks that the username is
+// present, not the registration rules: like the login handler with
+// emails, an invalid username can never match a stored user, so the
+// lookup answers it. The role must be one of the assignable roles.
+func validateAddNewMemberToTeamReq(req models.AddNewMemberToTeamReq) error {
+	if req.Username == "" {
+		return errors.New("username is required")
+	}
+
+	if _, ok := allowedTeamRoles[req.Role]; !ok {
+		return errors.New("role must be one of: member, admin")
+	}
+
+	return nil
+}

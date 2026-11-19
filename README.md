@@ -43,7 +43,10 @@ Strata is currently **under development**. The core architecture and the authent
 | `GET /api/v1/organizations/{organization_id}/members` | Bearer token | `200` — `{"members":[...]}` |
 | `DELETE /api/v1/organizations/{organization_id}/members/{member_id}` | Bearer token | `200` — `{"message":"member_removed"}` |
 | `POST /api/v1/organizations/{organization_id}/teams` | Bearer + `name`, `identifier`, `description` | `201` — `{"message":"team_created","teamID"}` |
+| `GET /api/v1/organizations/{organization_id}/teams` | Bearer token | `200` — `{"teams":[...]}` (members only) |
 | `DELETE /api/v1/organizations/{organization_id}/teams/{team_id}` | Bearer token | `200` — `{"message":"team_deleted"}` |
+| `POST /api/v1/organizations/{organization_id}/teams/{team_id}/members` | Bearer + `username`, `role` | `201` — `{"message":"team_member_added"}` |
+| `DELETE /api/v1/organizations/{organization_id}/teams/{team_id}/members/{member_id}` | Bearer token | `200` — `{"message":"team_member_removed"}` |
 | `GET /api/v1/invitations` | Bearer token | `200` — `{"invitations":[...]}` |
 | `POST /api/v1/invitations/{invitation_id}/accept` | Bearer token | `200` — `{"message":"invitation_accepted"}` |
 | `POST /api/v1/invitations/{invitation_id}/reject` | Bearer token | `200` — `{"message":"invitation_rejected"}` |
@@ -57,7 +60,7 @@ curl -X POST http://localhost:9090/api/v1/auth/register \
   -d '{"name":"Kodcu","username":"kodcu_42","email":"kodcu@strata.dev","password":"sifre1234"}'
 ```
 
-Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials or invalid/missing access token), `403` (a public organization hiding its member list), `404` (organization, user, member or invitation not found), `409` (conflicts: duplicate username/email, organization slug, membership, invitation, or removing the owner).
+Errors return an `{"error":"..."}` body: `400` (invalid request/validation), `401` (wrong credentials or invalid/missing access token), `403` (a public organization hiding its member list, or missing team privileges), `404` (organization, user, member or invitation not found), `409` (conflicts: duplicate username/email, organization slug, membership, invitation, removing a protected creator/owner, or team rules).
 
 ## Architecture
 

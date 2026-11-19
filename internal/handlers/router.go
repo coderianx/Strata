@@ -33,8 +33,11 @@ func APIRouter() *chi.Mux {
 		r.With(middlewares.Auth).Post("/{organization_id}/invite", organizations.InviteUserToOrganizationHandler)
 		r.With(middlewares.Auth).Get("/{organization_id}/members", organizations.OrganizationMembersHandler)
 		r.With(middlewares.Auth).Delete("/{organization_id}/members/{member_id}", organizations.RemoveMemberHandler)
+		r.With(middlewares.Auth).Get("/{organization_id}/teams", teams.ListOrganizationTeamsHandler)
 		r.With(middlewares.Auth).Post("/{organization_id}/teams", teams.CreateNewTeamHandler)
 		r.With(middlewares.Auth).Delete("/{organization_id}/teams/{team_id}", teams.DeleteTeamHandler)
+		r.With(middlewares.Auth).Post("/{organization_id}/teams/{team_id}/members", teams.AddNewMemberToTeamHandler)
+		r.With(middlewares.Auth).Delete("/{organization_id}/teams/{team_id}/members/{member_id}", teams.RemoveMemberFromTeamHandler)
 	})
 
 	// my organizations

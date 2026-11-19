@@ -25,3 +25,21 @@ func TestCreateNewTeamReqJSONFields(t *testing.T) {
 		t.Errorf("Unmarshal() = %+v, want %+v", req, want)
 	}
 }
+
+func TestAddNewMemberToTeamReqJSONFields(t *testing.T) {
+	body := `{"username":"kodcu_42","role":"admin"}`
+
+	var req models.AddNewMemberToTeamReq
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("Unmarshal() = %v, want nil", err)
+	}
+
+	want := models.AddNewMemberToTeamReq{
+		Username: "kodcu_42",
+		Role:     "admin",
+	}
+
+	if req != want {
+		t.Errorf("Unmarshal() = %+v, want %+v", req, want)
+	}
+}

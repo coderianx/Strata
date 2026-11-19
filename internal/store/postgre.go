@@ -235,5 +235,28 @@ func CreateTables() error {
 		return fmt.Errorf("store: create 'teams' table: %w", err)
 	}
 
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS team_members (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+			team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+
+			user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+			role TEXT NOT NULL DEFAULT 'member',
+
+			joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+			UNIQUE(team_id, user_id)
+		);
+		`,
+	)
+
+	if err != nil {
+		return fmt.Errorf("store: create 'team_members' table: %w", err)
+	}
+
 	return nil
 }
